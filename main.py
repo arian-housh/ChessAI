@@ -1,13 +1,16 @@
 import pygame
 import chess
 import sys
-
 import chess.pgn
 import time
+import chess.engine
+import requests
 
 # Initialize pygame
 pygame.init()
 
+
+print("hi")
 # Constants
 WIDTH, HEIGHT = 1000, 600
 ROWS, COLS = 8, 8
@@ -33,15 +36,13 @@ piece_values = {
     chess.KING: 10000
 }
 
-
-# Load images
 def load_images():
     pieces = ['wP', 'wR', 'wN', 'wB', 'wQ', 'wK', 'bP', 'bR', 'bN', 'bB', 'bQ', 'bK']
     images = {}
     for piece in pieces:
         images[piece] = pygame.image.load(f'ChessPieces/{piece}.png')
+        images[piece] = pygame.transform.scale(images[piece], (SQUARE_SIZE, SQUARE_SIZE))
     return images
-
 
 # Draw the board
 def draw_board(screen, player_color):
@@ -49,27 +50,61 @@ def draw_board(screen, player_color):
     for row in range(ROWS):
         for col in range(COLS):
             color = colors[(row + col) % 2]
-            if player_color == chess.BLACK:
-                pygame.draw.rect(screen, color,
-                                 pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
-            else:
-                pygame.draw.rect(screen, color,
-                                 pygame.Rect((7 - col) * SQUARE_SIZE, (7 - row) * SQUARE_SIZE, SQUARE_SIZE,
-                                             SQUARE_SIZE))
-
+            pygame.draw.rect(screen, color, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE))
 
 # Draw the pieces
 def draw_pieces(screen, board, images, player_color):
     piece_map = board.piece_map()
     for square, piece in piece_map.items():
         row, col = divmod(square, 8)
+        if player_color == chess.WHITE:
+            row, col = 7 - row, col  # Only invert the row if player is white
+        else:
+            row, col = row, 7 - col  # Only invert the column if player is black
         piece_symbol = piece.symbol()
         piece_color = 'w' if piece.color == chess.WHITE else 'b'
         piece_key = f'{piece_color}{piece_symbol.upper()}'
-        if player_color == chess.BLACK:
-            screen.blit(images[piece_key], (col * SQUARE_SIZE, row * SQUARE_SIZE))
+        screen.blit(images[piece_key], (col * SQUARE_SIZE, row * SQUARE_SIZE))
+
+# Highlight squares
+def highlight_squares(screen, board, selected_square, player_color):
+    if selected_square is not None:
+        row, col = divmod(selected_square, 8)
+        if player_color == chess.WHITE:
+            row, col = 7 - row, col  # Only invert the row if player is white
         else:
-            screen.blit(images[piece_key], ((7 - col) * SQUARE_SIZE, (7 - row) * SQUARE_SIZE))
+            row, col = row, 7 - col  # Only invert the column if player is black
+        pygame.draw.rect(screen, BLUE, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
+        for move in board.legal_moves:
+            if move.from_square == selected_square:
+                to_row, to_col = divmod(move.to_square, 8)
+                if player_color == chess.WHITE:
+                    to_row, to_col = 7 - to_row, to_col  # Only invert the row if player is white
+                else:
+                    to_row, to_col = to_row, 7 - to_col  # Only invert the column if player is black
+                pygame.draw.rect(screen, GREEN, pygame.Rect(to_col * SQUARE_SIZE, to_row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
+
+# Draw check highlight
+def draw_check(screen, board, player_color):
+    if board.is_check():
+        king_square = board.king(board.turn)
+        row, col = divmod(king_square, 8)
+        if player_color == chess.WHITE:
+            row, col = 7 - row, col  # Only invert the row if player is white
+        else:
+            row, col = row, 7 - col  # Only invert the column if player is black
+        pygame.draw.rect(screen, RED, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
+
+# Get square under mouse
+def get_square_under_mouse(player_color):
+    x, y = pygame.mouse.get_pos()
+    row = y // SQUARE_SIZE
+    col = x // SQUARE_SIZE
+    if player_color == chess.WHITE:
+        row, col = 7 - row, col  # Only invert the row if player is white
+    else:
+        row, col = row, 7 - col  # Only invert the column if player is black
+    return chess.square(col, row)
 
 
 # Draw the side panel
@@ -94,50 +129,7 @@ def draw_side_panel(screen, depth_searched, bot_evaluation, positions_analyzed, 
         screen.blit(text_surface, (panel_x + 10, 10 + i * 30))
 
 
-# Highlight squares
-def highlight_squares(screen, board, selected_square, player_color):
-    if selected_square is not None:
-        row, col = divmod(selected_square, 8)
-        if player_color == chess.BLACK:
-            pygame.draw.rect(screen, BLUE, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE),
-                             3)
-            for move in board.legal_moves:
-                if move.from_square == selected_square:
-                    to_row, to_col = divmod(move.to_square, 8)
-                    pygame.draw.rect(screen, GREEN,
-                                     pygame.Rect(to_col * SQUARE_SIZE, to_row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE),
-                                     3)
-        else:
-            pygame.draw.rect(screen, BLUE,
-                             pygame.Rect((7 - col) * SQUARE_SIZE, (7 - row) * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
-            for move in board.legal_moves:
-                if move.from_square == selected_square:
-                    to_row, to_col = divmod(move.to_square, 8)
-                    pygame.draw.rect(screen, GREEN,
-                                     pygame.Rect((7 - to_col) * SQUARE_SIZE, (7 - to_row) * SQUARE_SIZE, SQUARE_SIZE,
-                                                 SQUARE_SIZE), 3)
 
-
-def get_square_under_mouse(player_color):
-    x, y = pygame.mouse.get_pos()
-    row = y // SQUARE_SIZE
-    col = x // SQUARE_SIZE
-    if player_color == chess.BLACK:
-        return chess.square(col, row)
-    else:
-        return chess.square(7 - col, 7 - row)
-
-
-def draw_check(screen, board, player_color):
-    if board.is_check():
-        king_square = board.king(board.turn)
-        row, col = divmod(king_square, 8)
-        if player_color == chess.BLACK:
-            pygame.draw.rect(screen, RED, pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE),
-                             3)
-        else:
-            pygame.draw.rect(screen, RED,
-                             pygame.Rect((7 - col) * SQUARE_SIZE, (7 - row) * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE), 3)
 
 
 def draw_game_over_popup(screen, winner, num_moves):
@@ -266,6 +258,7 @@ def evaluate_board(board):
 
 
 
+
 def score_move(board, move):
 
     score = 0
@@ -312,6 +305,9 @@ def minimax(board, depth, alpha, beta, maximizing_player, start_time, time_limit
             if time.time() - start_time >= time_limit:
                 break
             board.push(move)
+            if board.is_checkmate():
+                board.pop()
+                return float('inf')  # Immediate checkmate found
             eval = minimax(board, depth - 1, alpha, beta, False, start_time, time_limit)
             board.pop()
             max_eval = max(max_eval, eval)
@@ -325,6 +321,9 @@ def minimax(board, depth, alpha, beta, maximizing_player, start_time, time_limit
             if time.time() - start_time >= time_limit:
                 break
             board.push(move)
+            if board.is_checkmate():
+                board.pop()
+                return float('-inf')  # Immediate checkmate found
             eval = minimax(board, depth - 1, alpha, beta, True, start_time, time_limit)
             board.pop()
             min_eval = min(min_eval, eval)
@@ -332,6 +331,7 @@ def minimax(board, depth, alpha, beta, maximizing_player, start_time, time_limit
             if beta <= alpha:
                 break
         return min_eval
+
 
 
 
@@ -465,22 +465,14 @@ def get_best_move(board, depth, openings=None, start_time=None, time_limit=None)
     beta = float('inf')
     legal_moves = list(board.legal_moves)
 
-    # Check if any pieces are under attack and prioritize moves that protect them
-    under_attack_moves = []
-    for move in legal_moves:
-        board.push(move)
-        if board.is_attacked_by(not board.turn, move.to_square):
-            under_attack_moves.append(move)
-        board.pop()
-
-    if under_attack_moves:
-        legal_moves = under_attack_moves
-
     for move in legal_moves:
         if start_time and time_limit and (time.time() - start_time) >= time_limit:
             break
 
         board.push(move)
+        if board.is_checkmate():
+            board.pop()
+            return move  # Immediate checkmate found, execute it
         board_value = minimax(board, depth - 1, alpha, beta, board.turn == chess.BLACK, start_time, time_limit)
         board.pop()
         if start_time and time_limit and (time.time() - start_time) >= time_limit:
@@ -507,8 +499,14 @@ def computer_move(board, max_depth, openings, time_limit):
     return best_move, actual_depth
 
 
+STOCKFISH_PATH = "/Users/arianhoush/Downloads/stockfish/stockfish-macos-x86-64"
 
 
+def computer_move_stockfish(board, time_limit):
+    result = engine.play(board, chess.engine.Limit(time=time_limit))
+    print(result)
+    print(result.move)
+    return result.move
 
 
 
@@ -517,6 +515,8 @@ def main():
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Chess Game")
 
+    #engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+
     openings = load_openings("openings.pgn")
 
     while True:
@@ -524,8 +524,10 @@ def main():
         #testing fen for endgame and delivering checkmate
        #test_fen = "4k3/8/8/8/8/4K3/4R3/4R3 b - - 0 1"
         #test_fen = "8/8/8/8/8/6k1/4r3/6K1 w - - 0 1"
-        #mate2_fen = "8/8/8/P7/8/k7/p7/K2n4 w - - 0 1"
-        #board = chess.Board(mate2_fen)
+        ##mate2_fen = "8/8/8/P7/8/k7/p7/K2n4 w - - 0 1"
+      #  mate1_fen = "8/8/8/8/8/1k6/3q4/1K6 w - - 0 1"
+       # mate1_2_fen = "4r1k1/7p/6p1/4B3/6N1/6P1/6K1/8 b - - 0 1"
+       # board = chess.Board(mate1_2_fen)
         board = chess.Board()
         images = load_images()
         num_moves = 0
@@ -541,8 +543,18 @@ def main():
             if not player_turn and not game_over:
                 try:
                     positions_analyzed = 0  # Reset positions analyzed counter
+                    #uncomment this
                     best_move, depth_searched = computer_move(board, 10, openings, 5)
+                    #comment lines 559 and 560  and 564
+                    #print(board)
+                    #depth_searched = 5
+                   # best_move = computer_move_stockfish(board, 5)
+
                     if best_move is not None:
+                        #also  comment this
+                        #board.push(best_move)
+
+
                         bot_evaluation = evaluate_board(board)
                 except Exception as e:
                     print(f"Error during computer move: {e}")
@@ -593,8 +605,10 @@ def main():
 
         if not play_again:
             break
-
+   # engine.quit()
     pygame.quit()
+  #  sys.exit()
+
 
 if __name__ == "__main__":
     main()
